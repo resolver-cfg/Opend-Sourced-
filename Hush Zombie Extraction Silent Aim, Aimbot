@@ -1,3 +1,47 @@
+
+
+--[[
+copyright © 2026 by resolver-cfg. All rights reserved
+
+you are free to download it ,  use for yourself, and modify this Luau script, but you must follow these rules
+
+1. Credit Your Changes: If you edit or modify this script, you must clearly comment or mention exactly which sections you edited. You cannot take credit for the whole thing
+2. No obfuscation: You are NOT ALLOWED TO Obfuscate it or hiding the source code in any way inside your own scripts. Keep it completely readable and open
+3. No profiting: You are not allowed to sell this code, charge people to use it, or use any part of it to make money or profit in any way
+
+I put real time and effort into writing this script. If you steal this code, hide it behind an obfuscator, or try to sell it, I will immediately file a formal DMCA copyright takedown request with GitHub to have your repository deleted
+--]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 do
     local cloneref = cloneref or function(inst) return inst end
     local compareinstances = compareinstances or function(left, right) return left == right end
