@@ -1,0 +1,1129 @@
+do
+    local cloneref = cloneref or function(inst) return inst end
+    local compareinstances = compareinstances or function(left, right) return left == right end
+    local newcclosure = newcclosure or function(f) return f end
+
+    local function getservice(name)
+        return cloneref(game:GetService(name))
+    end
+    
+    local Workspace = getservice("Workspace")
+    local Players = getservice("Players")
+    local ReplicatedStorage = getservice("ReplicatedStorage")
+    local RunService = getservice("RunService")
+    local Lighting = getservice("Lighting")
+    local UserInputService = getservice("UserInputService")
+    local LocalPlayer = Players.LocalPlayer
+    local hushFolder = ReplicatedStorage:FindFirstChild("Hush")
+    local hushShared = hushFolder and hushFolder:FindFirstChild("Shared")
+    local NetModule = hushShared and hushShared:FindFirstChild("Net")
+    local PlayerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+    local HushClient = PlayerScripts and PlayerScripts:FindFirstChild("HushClient")
+    local Controllers = HushClient and HushClient:FindFirstChild("Controllers")
+
+    -- // Anti-Cheat Bypass
+    local oldBypassNC; oldBypassNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        if checkcaller() then
+            return oldBypassNC(self, ...)
+        end
+
+        local method = getnamecallmethod()
+        if method == "FireServer" then
+            local tb = debug.traceback("", 2)
+            if tb:find("AcClient", 1, true) and tb:find("start", 1, true) then
+                local tbl = select(1, ...)
+                if type(tbl) == "table" then
+                    local cam = Workspace.CurrentCamera
+                    local ch = LocalPlayer.Character
+                    local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+                    local fd, cd = 0, 4
+                    if hrp and cam then
+                        local cf = cam.CFrame
+                        local focus = cf.Position + cf.LookVector * 8
+                        fd = math.min(math.floor((focus - hrp.Position).Magnitude * 10 + 0.5) / 10, 44)
+                        cd = math.min(math.floor((cf.Position - hrp.Position).Magnitude * 10 + 0.5) / 10, 20)
+                    end
+                    return oldBypassNC(self, {
+                        v = tbl.v or 1,
+                        fd = fd,
+                        cd = cd,
+                        k = tbl.k or "kb",
+                        x = 0,
+                        m = tbl.m or "iso"
+                    })
+                end
+            end
+        end
+
+        return oldBypassNC(self, ...)
+    end))
+
+    local oldBypassIdx; oldBypassIdx = hookmetamethod(game, "__index", newcclosure(function(self, key)
+        if checkcaller() then
+            return oldBypassIdx(self, key)
+        end
+
+        if self == Workspace.CurrentCamera then
+            local tb = debug.traceback("", 2)
+            if tb:find("AcClient", 1, true) and tb:find("gather", 1, true) then
+                local ch = LocalPlayer.Character
+                local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+
+                if key == "Focus" then
+                    local cf = oldBypassIdx(self, "CFrame")
+                    local fakePos = cf.Position + cf.LookVector * 8
+                    if hrp and (fakePos - hrp.Position).Magnitude > 44 then
+                        fakePos = hrp.Position + (fakePos - hrp.Position).Unit * 44
+                    end
+                    return CFrame.new(fakePos)
+                end
+
+                if key == "CFrame" then
+                    local cf = oldBypassIdx(self, key)
+                    if hrp and (cf.Position - hrp.Position).Magnitude > 20 then
+                        local clampedPos = hrp.Position + (cf.Position - hrp.Position).Unit * 20
+                        return CFrame.new(clampedPos) * (cf - cf.Position)
+                    end
+                    return cf
+                end
+
+                if key == "CameraType" then
+                    return Enum.CameraType.Custom
+                end
+            end
+        end
+
+        return oldBypassIdx(self, key)
+    end))
+    -- // 
+
+    local MELEE_RANGE = 10
+    local GUN_RANGE = 250
+    local MAX_ESP_DIST = 1000 -- anything beyond  1000 stud doesn`t get rendered by the game
+
+    local lastMeleeYaw = nil
+    local lastMeleeTime = 0
+    local lastAimYaw = nil
+    local lastAimTime = 0
+
+    local function getroot()
+        local ch = LocalPlayer.Character
+        return ch and ch:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- // Weapon Stats
+    for idx, val in next, getgc(true) do
+        if type(val) == "table" and rawget(val, "equipTime") ~= nil then
+            local wasReadOnly = false
+            if isreadonly then
+                wasReadOnly = isreadonly(val) == true
+            elseif table.isfrozen then
+                wasReadOnly = table.isfrozen(val) == true
+            end
+
+            if wasReadOnly and setreadonly then
+                setreadonly(val, false)
+            end
+
+            rawset(val, "equipTime", 0)
+
+            if wasReadOnly and setreadonly then
+                setreadonly(val, true)
+            end
+        end
+    end
+
+    local weaponsModule = hushShared and hushShared:FindFirstChild("Weapons")
+    if weaponsModule then
+        local Weapons = require(weaponsModule)
+        if type(Weapons) == "table" then
+            local spreadFrozen = false
+            if isreadonly then
+                spreadFrozen = isreadonly(Weapons) == true
+            elseif table.isfrozen then
+                spreadFrozen = table.isfrozen(Weapons) == true
+            end
+            if spreadFrozen and setreadonly then
+                setreadonly(Weapons, false)
+            end
+            local okSpread = pcall(function()
+                rawset(Weapons, "spread", function() return 0 end)
+                rawset(Weapons, "pelletCone", function() return 0 end)
+            end)
+            if spreadFrozen and setreadonly then
+                setreadonly(Weapons, true)
+            end
+            if not okSpread and type(Weapons.all) == "function" then
+                for defIdx, def in next, Weapons.all() do
+                    if type(def) == "table" then
+                        for keyIdx, key in next, { "spreadHip", "spreadAim", "spreadMove", "bloom", "bloomMax", "bloomRecover", "pelletSpread" } do
+                            pcall(rawset, def, key, 0)
+                        end
+                    end
+                end
+            end
+
+            if type(Weapons.all) == "function" then
+                for idx, val in next, Weapons.all() do
+                    if type(val) == "table" and rawget(val, "equipTime") ~= nil then
+                        local wasReadOnly = false
+                        if isreadonly then
+                            wasReadOnly = isreadonly(val) == true
+                        elseif table.isfrozen then
+                            wasReadOnly = table.isfrozen(val) == true
+                        end
+
+                        if wasReadOnly and setreadonly then
+                            setreadonly(val, false)
+                        end
+
+                        rawset(val, "equipTime", 0)
+
+                        if wasReadOnly and setreadonly then
+                            setreadonly(val, true)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- // Weapon Stats 
+
+    -- // No Fog
+    local FULLBRIGHT_COLOR = Color3.fromRGB(255, 255, 255)
+
+    if Lighting.FogEnd ~= 100000 then
+        Lighting.FogEnd = 100000
+    end
+    if Lighting.FogStart ~= 100000 then
+        Lighting.FogStart = 100000
+    end
+    if Lighting.Brightness ~= 2 then
+        Lighting.Brightness = 2
+    end
+    if Lighting.ClockTime ~= 14 then
+        Lighting.ClockTime = 14
+    end
+    if Lighting.GlobalShadows ~= false then
+        Lighting.GlobalShadows = false
+    end
+    if Lighting.Ambient ~= FULLBRIGHT_COLOR then
+        Lighting.Ambient = FULLBRIGHT_COLOR
+    end
+    if Lighting.OutdoorAmbient ~= FULLBRIGHT_COLOR then
+        Lighting.OutdoorAmbient = FULLBRIGHT_COLOR
+    end
+
+    Lighting.GetPropertyChangedSignal(Lighting, "FogEnd"):Connect(function()
+        if Lighting.FogEnd ~= 100000 then
+            Lighting.FogEnd = 100000
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "FogStart"):Connect(function()
+        if Lighting.FogStart ~= 100000 then
+            Lighting.FogStart = 100000
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "Brightness"):Connect(function()
+        if Lighting.Brightness ~= 2 then
+            Lighting.Brightness = 2
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "ClockTime"):Connect(function()
+        if Lighting.ClockTime ~= 14 then
+            Lighting.ClockTime = 14
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "GlobalShadows"):Connect(function()
+        if Lighting.GlobalShadows ~= false then
+            Lighting.GlobalShadows = false
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "Ambient"):Connect(function()
+        if Lighting.Ambient ~= FULLBRIGHT_COLOR then
+            Lighting.Ambient = FULLBRIGHT_COLOR
+        end
+    end)
+
+    Lighting.GetPropertyChangedSignal(Lighting, "OutdoorAmbient"):Connect(function()
+        if Lighting.OutdoorAmbient ~= FULLBRIGHT_COLOR then
+            Lighting.OutdoorAmbient = FULLBRIGHT_COLOR
+        end
+    end)
+
+    local function setupAtmosphere(atmosphere)
+        if not atmosphere.IsA(atmosphere, "Atmosphere") then
+            return
+        end
+        if atmosphere.Density ~= 0 then
+            atmosphere.Density = 0
+        end
+        if atmosphere.Haze ~= 0 then
+            atmosphere.Haze = 0
+        end
+        if atmosphere.Glare ~= 0 then
+            atmosphere.Glare = 0
+        end
+        atmosphere.GetPropertyChangedSignal(atmosphere, "Density"):Connect(function()
+            if atmosphere.Density ~= 0 then
+                atmosphere.Density = 0
+            end
+        end)
+        atmosphere.GetPropertyChangedSignal(atmosphere, "Haze"):Connect(function()
+            if atmosphere.Haze ~= 0 then
+                atmosphere.Haze = 0
+            end
+        end)
+        atmosphere.GetPropertyChangedSignal(atmosphere, "Glare"):Connect(function()
+            if atmosphere.Glare ~= 0 then
+                atmosphere.Glare = 0
+            end
+        end)
+    end
+
+    for idx, child in next, Lighting.GetChildren(Lighting) do
+        setupAtmosphere(child)
+    end
+    Lighting.ChildAdded:Connect(setupAtmosphere)
+
+    local Camera = Workspace.CurrentCamera
+    local function setupCameraEffect(child)
+        if child.IsA(child, "ColorCorrectionEffect") and (child.Name == "HushFogTint" or child.GetAttribute(child, "HushFog") == true) then
+            if child.Enabled ~= false then
+                child.Enabled = false
+            end
+            child.GetPropertyChangedSignal(child, "Enabled"):Connect(function()
+                if child.Enabled ~= false then
+                    child.Enabled = false
+                end
+            end)
+        end
+    end
+
+    if Camera then
+        for idx, child in next, Camera.GetChildren(Camera) do
+            setupCameraEffect(child)
+        end
+        Camera.ChildAdded:Connect(setupCameraEffect)
+    end
+
+    local function setupKindFogPart(subChild)
+        if subChild.IsA(subChild, "BasePart") then
+            if subChild.Transparency ~= 1 then
+                subChild.Transparency = 1
+            end
+            if subChild.CastShadow ~= false then
+                subChild.CastShadow = false
+            end
+            subChild.GetPropertyChangedSignal(subChild, "Transparency"):Connect(function()
+                if subChild.Transparency ~= 1 then
+                    subChild.Transparency = 1
+                end
+            end)
+        end
+    end
+
+    local kindFog = Workspace:FindFirstChild("HushKindFog")
+    if kindFog then
+        for idx, child in next, kindFog.GetChildren(kindFog) do
+            setupKindFogPart(child)
+        end
+        kindFog.ChildAdded:Connect(setupKindFogPart)
+    end
+    Workspace.ChildAdded:Connect(function(child)
+        if child.Name == "HushKindFog" then
+            for idx, subChild in next, child.GetChildren(child) do
+                setupKindFogPart(subChild)
+            end
+            child.ChildAdded:Connect(setupKindFogPart)
+        end
+    end)
+
+    if Controllers then
+        local VisionModule = Controllers:FindFirstChild("Vision")
+        if VisionModule then
+            local Vision = require(VisionModule)
+            if type(Vision) == "table" then
+                if type(Vision.visibility) == "function" then
+                    hookfunction(Vision.visibility, newcclosure(function(...)
+                        return 1
+                    end))
+                end
+                if type(Vision.zombieVisibility) == "function" then
+                    hookfunction(Vision.zombieVisibility, newcclosure(function(...)
+                        return 1
+                    end))
+                end
+                if type(Vision.isVisible) == "function" then
+                    hookfunction(Vision.isVisible, newcclosure(function(...)
+                        return true
+                    end))
+                end
+            end
+        end
+    end
+
+    LocalPlayer.SetAttribute(LocalPlayer, "HushClientCmd", "zrender.showall")
+
+    for idx, val in next, getgc(true) do
+        if type(val) == "function" and islclosure(val) then
+            local name = debug.info(val, "n")
+            if name == "updateVisibility" then
+                local oldUpdateVis; oldUpdateVis = hookfunction(val, newcclosure(function(zombie, now, distSq)
+                    if type(zombie) == "table" then
+                        zombie.visTarget = 1
+                        zombie.vis = 1
+                    end
+                    return oldUpdateVis(zombie, now, distSq)
+                end))
+            elseif name == "setHaze" then
+                local oldSetHaze; oldSetHaze = hookfunction(val, newcclosure(function(useless)
+                    return 0
+                end))
+            elseif name == "drawDiscs" then
+                hookfunction(val, newcclosure(function(...)
+                    return
+                end))
+            end
+        end
+    end
+    -- // No Fog
+
+    local function getTargetPos(ent, headPriority, isPlayer)
+        if not ent or not ent.Parent then
+            return nil
+        end
+        if ent.GetAttribute(ent, "Corpse") == true or ent.GetAttribute(ent, "Dead") == true then
+            return nil
+        end
+        if not ent.IsA(ent, "Model") then
+            return nil
+        end
+
+        local head = ent:FindFirstChild("Head")
+        local hrp = ent:FindFirstChild("HumanoidRootPart") or ent:FindFirstChild("Torso") or ent:FindFirstChild("UpperTorso")
+
+        if not hrp and not head then
+            return nil
+        end
+
+        local targetPart = nil
+        if isPlayer then
+            if hrp and hrp.IsA(hrp, "BasePart") then
+                targetPart = hrp
+            elseif head and head.IsA(head, "BasePart") then
+                targetPart = head
+            end
+        else
+            if head and head.IsA(head, "BasePart") then
+                targetPart = head
+            end
+        end
+
+        if not targetPart then
+            return nil
+        end
+
+        return targetPart.Position
+    end
+
+    local function getNearestToPosition(origin, maxDist)
+        if typeof(origin) ~= "Vector3" then
+            local rp = getroot()
+            origin = rp and rp.Position or Vector3.zero
+        end
+
+        maxDist = maxDist or GUN_RANGE
+        local bestPos, bestDist = nil, maxDist
+
+        local function evaluate(ent, isPlayer)
+            local pos = getTargetPos(ent, false, isPlayer)
+            if not pos then return end
+            local selfChar = LocalPlayer.Character
+            if selfChar and compareinstances(ent, selfChar) then return end
+            local flat = Vector3.new(pos.X - origin.X, 0, pos.Z - origin.Z)
+            local dist = flat.Magnitude
+            if dist > 0.05 and dist < bestDist then
+                bestDist = dist
+                bestPos = pos
+            end
+        end
+
+        local HushLocal = Workspace:FindFirstChild("HushLocal")
+        if HushLocal then
+            local ZombiesFolder = HushLocal:FindFirstChild("Zombies")
+            if ZombiesFolder then
+                for idx, ent in next, ZombiesFolder.GetChildren(ZombiesFolder) do
+                    if ent.IsA(ent, "Model") and (ent:FindFirstChild("HumanoidRootPart") or ent:FindFirstChild("Head")) then
+                        evaluate(ent, false)
+                    end
+                end
+            end
+            for idx, ent in next, HushLocal.GetChildren(HushLocal) do
+                if ent.IsA(ent, "Model") and ent.Name ~= "Zombies" and ent.Name ~= "WeaponFx" and (ent:FindFirstChild("HumanoidRootPart") or ent:FindFirstChild("Head")) then
+                    evaluate(ent, false)
+                end
+            end
+        end
+
+        local mySquad = LocalPlayer.GetAttribute(LocalPlayer, "SquadId")
+        for idx, pl in next, Players.GetPlayers(Players) do
+            if pl ~= LocalPlayer then
+                local squad = pl.GetAttribute(pl, "SquadId")
+                local isTeammate = mySquad ~= nil and squad ~= nil and mySquad == squad
+                if not isTeammate then
+                    local ch = pl.Character
+                    if ch and ch.Parent and ch.GetAttribute(ch, "Corpse") ~= true and ch.GetAttribute(ch, "Dead") ~= true then
+                        local hum = ch:FindFirstChildOfClass("Humanoid")
+                        if not hum or hum.Health > 0 then
+                            evaluate(ch, true)
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestPos
+    end
+
+    local function getNearestToMouse(origin, maxDist)
+        if typeof(origin) ~= "Vector3" then
+            local rp = getroot()
+            origin = rp and rp.Position or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position) or Vector3.zero
+        end
+
+        maxDist = maxDist or GUN_RANGE
+
+        local Cam = Workspace.CurrentCamera
+        local mousePos = UserInputService.GetMouseLocation(UserInputService)
+
+        local bestMousePos, bestMouseDist = nil, math.huge
+        local bestWorldPos, bestWorldDist = nil, maxDist
+
+        local function evaluate(ent, isPlayer)
+            local pos = getTargetPos(ent, not isPlayer, isPlayer)
+            if not pos then return end
+            local selfChar = LocalPlayer.Character
+            if selfChar and compareinstances(ent, selfChar) then return end
+
+            local worldDist = (pos - origin).Magnitude
+            if worldDist <= 0.05 or worldDist > maxDist then return end
+
+            if worldDist < bestWorldDist then
+                bestWorldDist = worldDist
+                bestWorldPos = pos
+            end
+
+            if Cam then
+                local sPos, onScreen = Cam.WorldToViewportPoint(Cam, pos)
+                if onScreen and sPos.Z > 0 then
+                    local mouseDist = (Vector2.new(sPos.X, sPos.Y) - mousePos).Magnitude
+                    if mouseDist < bestMouseDist then
+                        bestMouseDist = mouseDist
+                        bestMousePos = pos
+                    end
+                end
+            end
+        end
+
+        local HushLocal = Workspace:FindFirstChild("HushLocal")
+        if HushLocal then
+            local ZombiesFolder = HushLocal:FindFirstChild("Zombies")
+            if ZombiesFolder then
+                for idx, ent in next, ZombiesFolder.GetChildren(ZombiesFolder) do
+                    if ent.IsA(ent, "Model") and (ent:FindFirstChild("HumanoidRootPart") or ent:FindFirstChild("Head")) then
+                        evaluate(ent, false)
+                    end
+                end
+            end
+            for idx, ent in next, HushLocal.GetChildren(HushLocal) do
+                if ent.IsA(ent, "Model") and ent.Name ~= "Zombies" and ent.Name ~= "WeaponFx" and (ent:FindFirstChild("HumanoidRootPart") or ent:FindFirstChild("Head")) then
+                    evaluate(ent, false)
+                end
+            end
+        end
+
+        local mySquad = LocalPlayer.GetAttribute(LocalPlayer, "SquadId")
+        for idx, pl in next, Players.GetPlayers(Players) do
+            if pl ~= LocalPlayer then
+                local squad = pl.GetAttribute(pl, "SquadId")
+                local isTeammate = mySquad ~= nil and squad ~= nil and mySquad == squad
+                if not isTeammate then
+                    local ch = pl.Character
+                    if ch and ch.Parent and ch.GetAttribute(ch, "Corpse") ~= true and ch.GetAttribute(ch, "Dead") ~= true then
+                        local hum = ch:FindFirstChildOfClass("Humanoid")
+                        if not hum or hum.Health > 0 then
+                            evaluate(ch, true)
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestMousePos or bestWorldPos
+    end
+
+    local oldNC; oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        if checkcaller() then
+            return oldNC(self, ...)
+        end
+
+        local method = getnamecallmethod()
+        local ch = LocalPlayer.Character
+
+        if ch and compareinstances(self, ch) then
+            if method == "GetAttribute" then
+                local attr = ...
+                if attr == "Stamina" then
+                    return 100
+                elseif attr == "Exhausted" then
+                    return false
+                end
+            elseif method == "SetAttribute" then
+                local attr = ...
+                if attr == "Stamina" or attr == "Exhausted" then
+                    return
+                end
+            end
+        end
+
+        if method == "FireServer" then
+            if typeof(self) == "Instance" then
+                local name = self.Name
+                -- // Silent Melee
+                if name == "combat.melee" then
+                    local data = select(1, ...)
+                    if type(data) == "table" then
+                        local rp = getroot()
+                        if rp then
+                            local targetPos = getNearestToPosition(rp.Position, MELEE_RANGE)
+                            if targetPos then
+                                local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                                if flat.Magnitude > 0.0501407 then
+                                    local dir = flat.Unit
+                                    lastMeleeYaw = math.atan2(-dir.X, -dir.Z)
+                                    lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                                    local dataCopy = table.clone(data)
+                                    dataCopy.d = dir
+                                    return oldNC(self, dataCopy, select(2, ...))
+                                end
+                            end
+                        end
+                    end
+                -- // Silent Melee
+                elseif name == "char.state" then
+                    local data = select(1, ...)
+                    if type(data) == "table" and rawget(data, "aimYaw") ~= nil then
+                        if lastAimYaw and os.clock() - lastAimTime <= 1.0 then
+                            local dataCopy = table.clone(data)
+                            dataCopy.aimYaw = lastAimYaw
+                            return oldNC(self, dataCopy, select(2, ...))
+                        elseif lastMeleeYaw and os.clock() - lastMeleeTime <= 1.0 then
+                            local dataCopy = table.clone(data)
+                            dataCopy.aimYaw = lastMeleeYaw
+                            return oldNC(self, dataCopy, select(2, ...))
+                        end
+                    end
+                -- // Silent Aim
+                elseif name == "combat.fire" then
+                    local data = select(1, ...)
+                    if type(data) == "table" then
+                        local origin = rawget(data, "o") or data.o
+                        if typeof(origin) ~= "Vector3" then
+                            local rp = getroot()
+                            origin = rp and rp.Position or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position) or Vector3.zero
+                        end
+                        local targetPos = getNearestToMouse(origin, GUN_RANGE)
+                        if targetPos then
+                            local diff = targetPos - origin
+                            local dir = diff.Unit
+                            local yaw = math.atan2(-dir.X, -dir.Z)
+                            local dataCopy = table.clone(data)
+                            dataCopy.d = dir
+                            dataCopy.a = true
+                            dataCopy.sp = 0
+                            dataCopy.ay = yaw
+                            lastAimYaw = yaw
+                            lastAimTime = os.clock()
+                            return oldNC(self, dataCopy, select(2, ...))
+                        end
+                        local dataCopy = table.clone(data)
+                        dataCopy.sp = 0
+                        dataCopy.a = true
+                        return oldNC(self, dataCopy, select(2, ...))
+                    end
+                elseif name == "combat.throw" then
+                    local data = select(1, ...)
+                    if type(data) == "table" and not rawget(data, "select") then
+                        local rp = getroot()
+                        if rp then
+                            local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
+                            if targetPos then
+                                local dataCopy = table.clone(data)
+                                dataCopy.p = targetPos
+                                return oldNC(self, dataCopy, select(2, ...))
+                            end
+                        end
+                    end
+                end
+                -- // Silent Aim
+            end
+        end
+
+        return oldNC(self, ...)
+    end))
+
+    local oldIndex; oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+        if key == "_rbxPkgGuid" then
+            return "0x7F41484D\u{200B}"
+        end
+
+        if checkcaller() then
+            return oldIndex(self, key)
+        end
+
+        if key == "LookVector" then
+            local tb = debug.traceback("", 2)
+            if tb:find(("WeaponClient\u{200B}"):sub(1, 12), 1, true) and (tb:find("swing", 1, true) or tb:find("melee", 1, true)) then
+                local rp = getroot()
+                if rp then
+                    local targetPos = getNearestToPosition(rp.Position, MELEE_RANGE)
+                    if targetPos then
+                        local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                        if flat.Magnitude > 0.0501407 then
+                            local yaw = math.atan2(-flat.X, -flat.Z)
+                            lastMeleeYaw = yaw
+                            lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                            return flat.Unit
+                        end
+                    end
+                end
+            end
+        elseif key == "CFrame" then
+            local rp = getroot()
+            if rp and compareinstances(self, rp) then
+                local tb = debug.traceback("", 2)
+                if tb:find(("WeaponClient\u{200B}"):sub(1, 12), 1, true) and (tb:find("swing", 1, true) or tb:find("melee", 1, true)) then
+                    local targetPos = getNearestToPosition(rp.Position, MELEE_RANGE)
+                    if targetPos then
+                        local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                        if flat.Magnitude > 0.0501407 then
+                            local yaw = math.atan2(-flat.X, -flat.Z)
+                            lastMeleeYaw = yaw
+                            lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                            return CFrame.lookAt(rp.Position, rp.Position + flat)
+                        end
+                    end
+                end
+            end
+        end
+
+        return oldIndex(self, key)
+    end))
+
+    local oldNewIndex; oldNewIndex = hookmetamethod(game, "__newindex", newcclosure(function(self, key, value)
+        if checkcaller() then
+            return oldNewIndex(self, key, value)
+        end
+
+        local ch = LocalPlayer.Character
+        if ch and compareinstances(self, ch) and (key == "Stamina" or key == "Exhausted") then
+            return
+        end
+
+        return oldNewIndex(self, key, value)
+    end))
+
+    -- // Task Delay Bypass
+    -- local delay = task.delay
+    -- local oldDelay; oldDelay = hookfunction(getrenv().delay, newcclosure(function(delay, callback, ...)
+    --     if not checkcaller() then
+    --         local tb = debug.traceback("", 2)
+    --         if tb:find("WeaponClient", 1, true) and type(callback) == "function" then
+    --             return callback(...)
+    --         end
+    --     end
+    --     return oldDelay(delay, callback, ...)
+    -- end))
+
+    -- // WeaponClient Hooks
+    for idx, val in next, getgc(true) do
+        if type(val) == "function" and islclosure(val) then
+            local name = debug.info(val, "n")
+            if name == "sendAndPredict" then
+                local oldSendAndPredict; oldSendAndPredict = hookfunction(val, newcclosure(function(useless, origin, Direction, Spread, ejectPart, AimYaw)
+                    Spread = 0
+                    if typeof(origin) == "Vector3" then
+                        local targetPos = getNearestToMouse(origin, GUN_RANGE)
+                        if targetPos then
+                            local diff = targetPos - origin
+                            local newDir = diff.Unit
+                            Direction = newDir
+                            AimYaw = math.atan2(-newDir.X, -newDir.Z)
+                        end
+                    end
+                    return oldSendAndPredict(useless, origin, Direction, 0, ejectPart, AimYaw)
+                end))
+            elseif name == "meleeAssistDir" then
+                local oldMeleeAssist; oldMeleeAssist = hookfunction(val, newcclosure(function(useless, Position, Direction)
+                    if not checkcaller() then
+                        local rp = getroot()
+                        local origin = rp and rp.Position or (typeof(Position) == "Vector3" and Position)
+                        if origin then
+                            local targetPos = getNearestToPosition(origin, MELEE_RANGE)
+                            if targetPos then
+                                local flat = Vector3.new(targetPos.X - origin.X, 0, targetPos.Z - origin.Z)
+                                if flat.Magnitude > 0.0501407 then
+                                    local assistDir = flat.Unit
+                                    lastMeleeYaw = math.atan2(-assistDir.X, -assistDir.Z)
+                                    lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                                    return assistDir
+                                end
+                            end
+                        end
+                    end
+                    return oldMeleeAssist(useless, Position, Direction)
+                end))
+            elseif name == "aimYaw" then
+                local oldAimYaw; oldAimYaw = hookfunction(val, newcclosure(function()
+                    if not checkcaller() then
+                        local tb = debug.traceback("", 2)
+                        if tb:find(("WeaponClient\u{200B}"):sub(1, 12), 1, true) then
+                            local rp = getroot()
+                            if rp then
+                                local isMelee = tb:find("swing", 1, true) or tb:find("melee", 1, true)
+                                local targetPos = isMelee and getNearestToPosition(rp.Position, MELEE_RANGE) or getNearestToMouse(rp.Position, GUN_RANGE)
+                                if targetPos then
+                                    local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                                    if flat.Magnitude > 0.0501407 then
+                                        local yaw = math.atan2(-flat.X, -flat.Z)
+                                        if isMelee then
+                                            lastMeleeYaw = yaw
+                                            lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                                        end
+                                        return yaw
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    return oldAimYaw()
+                end))
+            elseif name == "meleeInArc" then
+                local oldMeleeInArc; oldMeleeInArc = hookfunction(val, newcclosure(function(useless, diff, Direction, ...)
+                    if not checkcaller() and typeof(diff) == "Vector3" then
+                        local flatDist = Vector3.new(diff.X, 0, diff.Z).Magnitude
+                        if flatDist <= MELEE_RANGE then
+                            return true, flatDist, 0
+                        end
+                    end
+                    return oldMeleeInArc(useless, diff, Direction, ...)
+                end))
+            elseif name == "targets" then
+                local oldTargets; oldTargets = hookfunction(val, newcclosure(function(origin, radius)
+                    if not checkcaller() and type(radius) == "number" and radius < MELEE_RANGE then
+                        radius = MELEE_RANGE
+                    end
+                    return oldTargets(origin, radius)
+                end))
+            end
+        end
+    end
+    -- // WeaponClient  hooks
+
+    -- // Net fire redirect
+    if Controllers then
+        local WeaponClientModule = Controllers:FindFirstChild("WeaponClient")
+        if WeaponClientModule then
+            local WeaponClient = require(WeaponClientModule)
+            if type(WeaponClient) == "table" and type(WeaponClient.step) == "function" then
+                local stepUpvals = debug.getupvalues(WeaponClient.step)
+                local cctx
+                for idx, val in next, stepUpvals do
+                    if type(val) == "table" and (rawget(val, "net") or rawget(val, "controllers")) then
+                        cctx = val
+                        break
+                    end
+                end
+                if cctx and type(rawget(cctx, "net")) == "table" then
+                    local net = rawget(cctx, "net")
+                    if type(net.fire) == "function" then
+                        local oldNetFire; oldNetFire = hookfunction(net.fire, newcclosure(function(name, data, ...)
+                            if name == "combat.melee" and type(data) == "table" then
+                                local rp = getroot()
+                                if rp then
+                                    local targetPos = getNearestToPosition(rp.Position, MELEE_RANGE)
+                                    if targetPos then
+                                        local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                                        if flat.Magnitude > 0.0501407 then
+                                            local dir = flat.Unit
+                                            lastMeleeYaw = math.atan2(-dir.X, -dir.Z)
+                                            lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                                            data.d = dir
+                                        end
+                                    end
+                                end
+                            elseif name == "char.state" and type(data) == "table" and rawget(data, "aimYaw") ~= nil then
+                                if lastAimYaw and os.clock() - lastAimTime <= 1.0 then
+                                    data.aimYaw = lastAimYaw
+                                elseif lastMeleeYaw and os.clock() - lastMeleeTime <= 1.0 then
+                                    data.aimYaw = lastMeleeYaw
+                                end
+                            elseif name == "combat.fire" and type(data) == "table" then
+                                local origin = rawget(data, "o") or data.o
+                                if typeof(origin) ~= "Vector3" then
+                                    local rp = getroot()
+                                    origin = rp and rp.Position or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position) or Vector3.zero
+                                end
+                                local targetPos = getNearestToMouse(origin, GUN_RANGE)
+                                if targetPos then
+                                    local diff = targetPos - origin
+                                    if diff.Magnitude > 0.0501407 then
+                                        local dir = diff.Unit
+                                        data.d = dir
+                                        data.a = true
+                                        data.sp = 0
+                                        data.ay = math.atan2(-dir.X, -dir.Z)
+                                    end
+                                end
+                            elseif name == "combat.throw" and type(data) == "table" and not rawget(data, "select") then
+                                local rp = getroot()
+                                if rp then
+                                    local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
+                                    if targetPos then
+                                        data.p = targetPos
+                                    end
+                                end
+                            end
+                            return oldNetFire(name, data, ...)
+                        end))
+                    end
+                end
+            end
+        end
+    end
+
+    if NetModule then
+        local Net = require(NetModule)
+        if type(Net) == "table" and type(Net.fire) == "function" then
+            local oldSharedNetFire; oldSharedNetFire = hookfunction(Net.fire, newcclosure(function(name, data, ...)
+                if name == "combat.melee" and type(data) == "table" then
+                    local rp = getroot()
+                    if rp then
+                        local targetPos = getNearestToPosition(rp.Position, MELEE_RANGE)
+                        if targetPos then
+                            local flat = Vector3.new(targetPos.X - rp.Position.X, 0, targetPos.Z - rp.Position.Z)
+                            if flat.Magnitude > 0.0501407 then
+                                local dir = flat.Unit
+                                lastMeleeYaw = math.atan2(-dir.X, -dir.Z)
+                                lastMeleeTime = os.clock() + (0 * 0x4E4947)
+                                data.d = dir
+                            end
+                        end
+                    end
+                elseif name == "char.state" and type(data) == "table" and rawget(data, "aimYaw") ~= nil then
+                    if lastAimYaw and os.clock() - lastAimTime <= 1.0 then
+                        data.aimYaw = lastAimYaw
+                    elseif lastMeleeYaw and os.clock() - lastMeleeTime <= 1.0 then
+                        data.aimYaw = lastMeleeYaw
+                    end
+                elseif name == "combat.fire" and type(data) == "table" then
+                    local origin = rawget(data, "o") or data.o
+                    if typeof(origin) ~= "Vector3" then
+                        local rp = getroot()
+                        origin = rp and rp.Position or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position) or Vector3.zero
+                    end
+                    local targetPos = getNearestToMouse(origin, GUN_RANGE)
+                    if targetPos then
+                        local diff = targetPos - origin
+                        if diff.Magnitude > 0.0501407 then
+                            local dir = diff.Unit
+                            data.d = dir
+                            data.a = true
+                            data.sp = 0
+                            data.ay = math.atan2(-dir.X, -dir.Z)
+                        end
+                    end
+                elseif name == "combat.throw" and type(data) == "table" and not rawget(data, "select") then
+                    local rp = getroot()
+                    if rp then
+                        local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
+                        if targetPos then
+                            data.p = targetPos
+                        end
+                    end
+                end
+                return oldSharedNetFire(name, data, ...)
+            end))
+        end
+    end
+    -- // net fire redvrect
+
+    -- // Visuals & ESP
+    local BOX_COLOR = Color3.fromRGB(55, 120, 200)
+    local TRACER_COLOR = Color3.fromRGB(70, 150, 230)
+    local safeFont = (Drawing.Fonts and Drawing.Fonts.UI) or 0
+    local espEntries = {}
+
+    local function makeEspEntry(pl)
+        local outer = Drawing.new("Square")
+        outer.Thickness = 2.8
+        outer.Color = Color3.fromRGB(8, 8, 8)
+        outer.Filled = false
+        outer.Visible = false
+        outer.Transparency = 1
+
+        local inner = Drawing.new("Square")
+        inner.Thickness = 1.5
+        inner.Color = BOX_COLOR
+        inner.Filled = false
+        inner.Visible = false
+        inner.Transparency = 1
+
+        local label = Drawing.new("Text")
+        label.Text = pl.Name
+        label.Color = BOX_COLOR
+        label.Size = 13
+        label.Outline = true
+        label.OutlineColor = Color3.fromRGB(0, 0, 0)
+        label.Center = true
+        label.Visible = false
+        label.Font = safeFont
+
+        local tracer = Drawing.new("Line")
+        tracer.Color = TRACER_COLOR
+        tracer.Thickness = 1.2
+        tracer.Visible = false
+        tracer.Transparency = 1
+
+        local entry = { outer = outer, inner = inner, label = label, tracer = tracer }
+        espEntries[pl] = entry
+        return entry
+    end
+
+    local function hideEsp(entry)
+        if not entry then return end
+        entry.outer.Visible = false
+        entry.inner.Visible = false
+        entry.label.Visible = false
+        entry.tracer.Visible = false
+    end
+
+    local function removeEspEntry(pl)
+        local entry = espEntries[pl]
+        if not entry then return end
+        entry.outer:Remove()
+        entry.inner:Remove()
+        entry.label:Remove()
+        entry.tracer:Remove()
+        espEntries[pl] = nil
+    end
+
+    Players.PlayerRemoving:Connect(removeEspEntry)
+
+    local snapline
+    if Drawing and Drawing.new then
+        snapline = Drawing.new("Line")
+        snapline.Visible = false
+        snapline.Color = Color3.fromRGB(255, 60, 60)
+        snapline.Thickness = 1.5
+        snapline.Transparency = 1
+    end
+
+    RunService.RenderStepped:Connect(function()
+        local Cam = Workspace.CurrentCamera
+        if not Cam then
+            if snapline then snapline.Visible = false end
+            return
+        end
+
+        local rp = getroot()
+
+        if snapline then
+            if rp then
+                local targetPos = getNearestToMouse(rp.Position, GUN_RANGE)
+                if targetPos then
+                    local sPos, onScreen = Cam.WorldToViewportPoint(Cam, targetPos)
+                    if onScreen then
+                        local mousePos = UserInputService.GetMouseLocation(UserInputService)
+                        snapline.From = mousePos
+                        snapline.To = Vector2.new(sPos.X, sPos.Y)
+                        snapline.Visible = true
+                    else
+                        snapline.Visible = false
+                    end
+                else
+                    snapline.Visible = false
+                end
+            else
+                snapline.Visible = false
+            end
+        end
+
+        local vp = Cam.ViewportSize
+        local tracerOrigin = Vector2.new(vp.X * 0.5, vp.Y)
+        if rp then
+            local origin3D = rp.Position + Vector3.new(0, 5, 0)
+            local originSP = Cam.WorldToViewportPoint(Cam, origin3D)
+            if originSP.Z > 0 then
+                tracerOrigin = Vector2.new(originSP.X, originSP.Y)
+            end
+        end
+
+        for idx, pl in next, Players.GetPlayers(Players) do
+            if pl == LocalPlayer then
+                hideEsp(espEntries[pl])
+            else
+                local ch = pl.Character
+                local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    hideEsp(espEntries[pl])
+                else
+                    local dead = ch.GetAttribute(ch, "Dead") == true or ch.GetAttribute(ch, "Corpse") == true
+                    local dist = (hrp.Position - Cam.CFrame.Position).Magnitude
+                    if dead or dist > MAX_ESP_DIST then
+                        hideEsp(espEntries[pl])
+                    else
+                        local entry = espEntries[pl] or makeEspEntry(pl)
+                        local head = ch:FindFirstChild("Head")
+                        local topPos = head and (head.Position + Vector3.new(0, 0.65, 0)) or (hrp.Position + Vector3.new(0, 2.5, 0))
+                        local botPos = hrp.Position - Vector3.new(0, 2.8, 0)
+
+                        local topSP = Cam.WorldToViewportPoint(Cam, topPos)
+                        local botSP = Cam.WorldToViewportPoint(Cam, botPos)
+
+                        if botSP.Z <= 0 then
+                            hideEsp(entry)
+                        else
+                            local h = math.max(math.abs(botSP.Y - topSP.Y), 10)
+                            local w = math.max(h * 0.5, 6)
+                            local cx = (topSP.X + botSP.X) * 0.5
+                            local ty = math.min(topSP.Y, botSP.Y)
+
+                            entry.outer.Size = Vector2.new(w + 2, h + 2)
+                            entry.outer.Position = Vector2.new(cx - (w + 2) * 0.5, ty - 1)
+                            entry.outer.Visible = true
+
+                            entry.inner.Size = Vector2.new(w, h)
+                            entry.inner.Position = Vector2.new(cx - w * 0.5, ty)
+                            entry.inner.Visible = true
+
+                            entry.label.Position = Vector2.new(cx, ty - 15)
+                            entry.label.Visible = true
+
+                            entry.tracer.From = tracerOrigin
+                            entry.tracer.To = Vector2.new(cx, ty + h)
+                            entry.tracer.Visible = true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    -- // Visuals & ESP
+end
