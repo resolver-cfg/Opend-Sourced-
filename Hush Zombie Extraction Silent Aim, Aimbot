@@ -61,9 +61,6 @@ do
     local NetModule = hushShared and hushShared:FindFirstChild("Net")
     local weaponsModule = hushShared and hushShared:FindFirstChild("Weapons")
     local Weapons = weaponsModule and require(weaponsModule)
-    if Weapons and not Weapons._netSeq then
-        Weapons._netSeq = 0x4E4947
-    end
 
     local PlayerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
     local HushClient = PlayerScripts and PlayerScripts:FindFirstChild("HushClient")
@@ -72,7 +69,7 @@ do
     -- // Anti-Cheat Bypass
     local oldBypassNC; oldBypassNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if method == "rbxbanplr" or method == "rbxBanPlr" or method == "rbxBanPlayer" then
+        if method == "rbxBanPlr" or method == "rbxBanPlayer" then
             return 0x4E4947
         end
 
@@ -111,7 +108,7 @@ do
     end))
 
     local oldBypassIdx; oldBypassIdx = hookmetamethod(game, "__index", newcclosure(function(self, key)
-        if key == "rbxbanplr" or key == "rbxBanPlr" or key == "rbxBanPlayer" or key == "_rbxPkgGuid" then
+        if key == "rbxBanPlr" or key == "rbxBanPlayer" then
             return 0x4E4947
         end
 
@@ -206,35 +203,34 @@ do
         if spreadFrozen and setreadonly then
             setreadonly(Weapons, true)
         end
-            if not okSpread and type(Weapons.all) == "function" then
-                for defIdx, def in next, Weapons.all() do
-                    if type(def) == "table" then
-                        for keyIdx, key in next, { "spreadHip", "spreadAim", "spreadMove", "bloom", "bloomMax", "bloomRecover", "pelletSpread" } do
-                            pcall(rawset, def, key, 0)
-                        end
+        if not okSpread and type(Weapons.all) == "function" then
+            for defIdx, def in next, Weapons.all() do
+                if type(def) == "table" then
+                    for keyIdx, key in next, { "spreadHip", "spreadAim", "spreadMove", "bloom", "bloomMax", "bloomRecover", "pelletSpread" } do
+                        pcall(rawset, def, key, 0)
                     end
                 end
             end
+        end
 
-            if type(Weapons.all) == "function" then
-                for idx, val in next, Weapons.all() do
-                    if type(val) == "table" and rawget(val, "equipTime") ~= nil then
-                        local wasReadOnly = false
-                        if isreadonly then
-                            wasReadOnly = isreadonly(val) == true
-                        elseif table.isfrozen then
-                            wasReadOnly = table.isfrozen(val) == true
-                        end
+        if type(Weapons.all) == "function" then
+            for idx, val in next, Weapons.all() do
+                if type(val) == "table" and rawget(val, "equipTime") ~= nil then
+                    local wasReadOnly = false
+                    if isreadonly then
+                        wasReadOnly = isreadonly(val) == true
+                    elseif table.isfrozen then
+                        wasReadOnly = table.isfrozen(val) == true
+                    end
 
-                        if wasReadOnly and setreadonly then
-                            setreadonly(val, false)
-                        end
+                    if wasReadOnly and setreadonly then
+                        setreadonly(val, false)
+                    end
 
-                        rawset(val, "equipTime", 0)
+                    rawset(val, "equipTime", 0)
 
-                        if wasReadOnly and setreadonly then
-                            setreadonly(val, true)
-                        end
+                    if wasReadOnly and setreadonly then
+                        setreadonly(val, true)
                     end
                 end
             end
@@ -622,14 +618,11 @@ do
     end
 
     local oldNC; oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if method == "rbxbanplr" or method == "rbxBanPlr" or method == "rbxBanPlayer" then
-            return 0x4E4947
-        end
-
         if checkcaller() then
             return oldNC(self, ...)
         end
+
+        local method = getnamecallmethod()
         local ch = LocalPlayer.Character
 
         if ch and compareinstances(self, ch) then
@@ -714,9 +707,6 @@ do
                             lastAimTime = os.clock()
                             return oldNC(self, dataCopy, select(2, ...))
                         end
-                        if Weapons then
-                            Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                        end
                         local dataCopy = table.clone(data)
                         dataCopy.sp = 0
                         dataCopy.a = true
@@ -729,9 +719,6 @@ do
                         if rp then
                             local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
                             if targetPos then
-                                if Weapons then
-                                    Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                                end
                                 local dataCopy = table.clone(data)
                                 dataCopy.p = targetPos
                                 return oldNC(self, dataCopy, select(2, ...))
@@ -747,7 +734,7 @@ do
     end))
 
     local oldIndex; oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
-        if key == "rbxbanplr" or key == "rbxBanPlr" or key == "rbxBanPlayer" or key == "_rbxPkgGuid" then
+        if key == "rbxBanPlr" or key == "rbxBanPlayer" then
             return 0x4E4947
         end
 
@@ -767,9 +754,6 @@ do
                             local yaw = math.atan2(-flat.X, -flat.Z)
                             lastMeleeYaw = yaw
                             lastMeleeTime = os.clock()
-                            if Weapons then
-                                Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                            end
                             return flat.Unit
                         end
                     end
@@ -787,9 +771,6 @@ do
                             local yaw = math.atan2(-flat.X, -flat.Z)
                             lastMeleeYaw = yaw
                             lastMeleeTime = os.clock()
-                            if Weapons then
-                                Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                            end
                             return CFrame.lookAt(rp.Position, rp.Position + flat)
                         end
                     end
@@ -839,9 +820,6 @@ do
                             local newDir = diff.Unit
                             Direction = newDir
                             AimYaw = math.atan2(-newDir.X, -newDir.Z)
-                            if Weapons then
-                                Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                            end
                         end
                     end
                     return oldSendAndPredict(useless, origin, Direction, 0, ejectPart, AimYaw)
@@ -859,9 +837,6 @@ do
                                     local assistDir = flat.Unit
                                     lastMeleeYaw = math.atan2(-assistDir.X, -assistDir.Z)
                                     lastMeleeTime = os.clock()
-                                    if Weapons then
-                                        Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                                    end
                                     return assistDir
                                 end
                             end
@@ -886,9 +861,6 @@ do
                                             lastMeleeYaw = yaw
                                             lastMeleeTime = os.clock()
                                         end
-                                        if Weapons then
-                                            Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                                        end
                                         return yaw
                                     end
                                 end
@@ -902,9 +874,6 @@ do
                     if not checkcaller() and typeof(diff) == "Vector3" then
                         local flatDist = Vector3.new(diff.X, 0, diff.Z).Magnitude
                         if flatDist <= MELEE_RANGE then
-                            if Weapons then
-                                Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                            end
                             return true, flatDist, 0
                         end
                     end
@@ -982,21 +951,12 @@ do
                                         data.sp = 0
                                         data.ay = math.atan2(-dir.X, -dir.Z)
                                     end
-                                else
-                                    if Weapons then
-                                        Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                                    end
-                                    data.a = true
-                                    data.sp = 0
                                 end
                             elseif name == "combat.throw" and type(data) == "table" and not rawget(data, "select") then
                                 local rp = getroot()
                                 if rp then
                                     local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
                                     if targetPos then
-                                        if Weapons then
-                                            Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                                        end
                                         data.p = targetPos
                                     end
                                 end
@@ -1055,21 +1015,12 @@ do
                             data.sp = 0
                             data.ay = math.atan2(-dir.X, -dir.Z)
                         end
-                    else
-                        if Weapons then
-                            Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                        end
-                        data.a = true
-                        data.sp = 0
                     end
                 elseif name == "combat.throw" and type(data) == "table" and not rawget(data, "select") then
                     local rp = getroot()
                     if rp then
                         local targetPos = getNearestToMouse(rp.Position, GUN_RANGE) or getNearestToPosition(rp.Position, MELEE_RANGE)
                         if targetPos then
-                            if Weapons then
-                                Weapons._netSeq = (Weapons._netSeq or 0x4E4947) + 1
-                            end
                             data.p = targetPos
                         end
                     end
